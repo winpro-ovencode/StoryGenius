@@ -85,14 +85,27 @@ class Chatbot:
         if character_info.get('description'):
             prompt += f"\n- 외모/특징: {character_info['description']}"
         
+        # 챕터 맥락 정보가 있는 경우 추가
+        if character_info.get('current_chapter'):
+            chapter = character_info['current_chapter']
+            prompt += f"""
+
+현재 챕터 맥락:
+- 챕터: {chapter['title']}
+- 상황: {chapter['summary']}
+- 주요 사건: {', '.join(chapter.get('key_events', []))}
+
+이 챕터의 상황과 맥락을 고려하여 대화하세요. 해당 챕터에서 일어난 사건들과 상황에 맞는 반응을 보여주세요."""
+        
         prompt += """
 
 대화 규칙:
 1. 항상 이 캐릭터의 성격과 배경에 맞게 응답하세요
 2. 캐릭터의 말투와 어조를 일관되게 유지하세요
 3. 소설의 세계관을 벗어나지 않는 범위에서 대화하세요
-4. 자연스럽고 매력적인 대화를 만들어주세요
-5. 한국어로 응답하세요"""
+4. 챕터 맥락이 있다면 해당 상황과 사건들을 고려하여 대화하세요
+5. 자연스럽고 매력적인 대화를 만들어주세요
+6. 한국어로 응답하세요"""
 
         return prompt
     

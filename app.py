@@ -92,16 +92,56 @@ def show_upload_page():
                             'characters': []
                         }
                         
-                        # 데이터 매니저에 저장
-                        st.session_state.data_manager.save_novel(novel_info)
-                        st.session_state.current_novel = novel_info
-                        
-                        st.success("PDF 업로드 및 텍스트 추출이 완료되었습니다!")
+                        st.success("PDF 텍스트 추출이 완료되었습니다!")
                         st.write(f"추출된 텍스트 길이: {len(text_content):,} 문자")
                         
-                        # 텍스트 미리보기
-                        with st.expander("텍스트 미리보기"):
-                            st.text_area("", text_content[:1000] + "...", height=200, disabled=True)
+                        # 자동으로 챕터 분석 시작
+                        with st.spinner("챕터를 분석하고 있습니다..."):
+                            try:
+                                chapters = st.session_state.character_extractor.extract_chapters(text_content)
+                                novel_info['chapters'] = chapters
+                                st.success(f"{len(chapters)}개의 챕터가 분석되었습니다!")
+                                
+                                # 자동으로 캐릭터 추출 시작
+                                with st.spinner("캐릭터 정보를 추출하고 있습니다..."):
+                                    try:
+                                        characters = st.session_state.character_extractor.extract_characters(
+                                            text_content, chapters
+                                        )
+                                        novel_info['characters'] = characters
+                                        
+                                        # 데이터 매니저에 저장
+                                        st.session_state.data_manager.save_novel(novel_info)
+                                        st.session_state.current_novel = novel_info
+                                        
+                                        st.success(f"분석 완료! {len(characters)}명의 캐릭터가 추출되었습니다!")
+                                        
+                                        # 결과 요약
+                                        st.info("✅ PDF 업로드 및 전체 분석이 완료되었습니다. 이제 '캐릭터 대화' 메뉴에서 캐릭터들과 대화할 수 있습니다.")
+                                        
+                                        # 텍스트 미리보기
+                                        with st.expander("텍스트 미리보기"):
+                                            st.text_area("", text_content[:1000] + "...", height=200, disabled=True)
+                                        
+                                        # 분석 결과 미리보기
+                                        with st.expander("분석 결과 미리보기"):
+                                            st.write(f"**챕터 수:** {len(chapters)}")
+                                            st.write(f"**캐릭터 수:** {len(characters)}")
+                                            st.write("**추출된 캐릭터들:**")
+                                            for char in characters:
+                                                st.write(f"- {char['name']}: {char['role']}")
+                                                
+                                    except Exception as e:
+                                        st.error(f"캐릭터 추출 중 오류: {str(e)}")
+                                        # 챕터 분석까지는 완료된 상태로 저장
+                                        st.session_state.data_manager.save_novel(novel_info)
+                                        st.session_state.current_novel = novel_info
+                                        
+                            except Exception as e:
+                                st.error(f"챕터 분석 중 오류: {str(e)}")
+                                # 기본 정보만 저장
+                                st.session_state.data_manager.save_novel(novel_info)
+                                st.session_state.current_novel = novel_info
                     else:
                         st.error("PDF에서 텍스트를 추출할 수 없습니다.")
                         
@@ -182,64 +222,171 @@ def show_character_chat_page():
         st.warning("먼저 캐릭터 추출을 완료해주세요.")
         return
     
-    characters = st.session_state.current_novel['characters']
+    novel = st.session_state.current_novel
+    chapters = novel.get('chapters', [])
+    characters = novel.get('characters', [])
+    
+    # 대화 모드 선택
+    chat_mode = st.radio(
+        "대화 모드를 선택하세요:",
+        ["전체 캐릭터 대화", "챕터별 캐릭터 대화"],
+        key="chat_mode_select"
+    )
+    
+    if chat_mode == "전체 캐릭터 대화":
+        show_all_character_chat(characters)
+    else:
+        show_chapter_character_chat(chapters, characters)
+
+def show_all_character_chat(characters):
+    """전체 캐릭터와 대화하는 기능"""
+    st.subheader("📝 전체 캐릭터 대화")
     
     # 캐릭터 선택
     selected_character = st.selectbox(
         "대화할 캐릭터를 선택하세요",
         options=[char['name'] for char in characters],
-        key="chat_character_select"
+        key="all_chat_character_select"
     )
     
     if selected_character:
         character_info = next(char for char in characters if char['name'] == selected_character)
+        show_character_conversation(selected_character, character_info, "all")
+
+def show_chapter_character_chat(chapters, characters):
+    """챕터별 캐릭터와 대화하는 기능"""
+    st.subheader("📖 챕터별 캐릭터 대화")
+    
+    if not chapters:
+        st.warning("챕터 정보가 없습니다. 먼저 챕터 분석을 완료해주세요.")
+        return
+    
+    # 챕터 선택
+    chapter_titles = [f"챕터 {ch['number']}: {ch['title']}" for ch in chapters]
+    selected_chapter_idx = st.selectbox(
+        "챕터를 선택하세요",
+        options=range(len(chapters)),
+        format_func=lambda x: chapter_titles[x],
+        key="chapter_select"
+    )
+    
+    selected_chapter = chapters[selected_chapter_idx]
+    chapter_characters = selected_chapter.get('characters_mentioned', [])
+    
+    # 선택한 챕터 정보 표시
+    with st.expander(f"📖 {selected_chapter['title']} 정보"):
+        st.write(f"**요약:** {selected_chapter['summary']}")
+        if chapter_characters:
+            st.write(f"**등장 캐릭터:** {', '.join(chapter_characters)}")
+        else:
+            st.write("**등장 캐릭터:** 분석된 캐릭터가 없습니다.")
+    
+    if not chapter_characters:
+        st.warning("이 챕터에는 분석된 캐릭터가 없습니다.")
+        return
+    
+    # 챕터의 캐릭터 중에서 대화할 캐릭터 선택
+    # 전체 캐릭터 리스트에서 챕터에 등장하는 캐릭터만 필터링
+    available_characters = []
+    for char in characters:
+        if char['name'] in chapter_characters:
+            available_characters.append(char)
+    
+    if not available_characters:
+        st.warning("이 챕터에 등장하는 캐릭터의 상세 정보가 없습니다.")
+        return
+    
+    selected_character_name = st.selectbox(
+        "대화할 캐릭터를 선택하세요",
+        options=[char['name'] for char in available_characters],
+        key="chapter_chat_character_select"
+    )
+    
+    if selected_character_name:
+        character_info = next(char for char in available_characters if char['name'] == selected_character_name)
         
-        # 캐릭터 정보 표시
-        with st.expander(f"{selected_character} 정보"):
-            st.write(f"**성격:** {character_info['personality']}")
-            st.write(f"**배경:** {character_info['background']}")
+        # 챕터 맥락 정보 추가
+        character_info_with_context = character_info.copy()
+        character_info_with_context['current_chapter'] = selected_chapter
         
-        # 대화 히스토리 초기화
-        if selected_character not in st.session_state.chat_history:
-            st.session_state.chat_history[selected_character] = []
+        show_character_conversation(
+            selected_character_name, 
+            character_info_with_context, 
+            f"chapter_{selected_chapter['number']}"
+        )
+
+def show_character_conversation(character_name, character_info, context_key):
+    """캐릭터와의 대화를 표시하고 관리하는 함수"""
+    
+    # 캐릭터 정보 표시
+    with st.expander(f"🎭 {character_name} 정보"):
+        st.write(f"**성격:** {character_info['personality']}")
+        st.write(f"**배경:** {character_info['background']}")
+        st.write(f"**역할:** {character_info['role']}")
+        if character_info.get('relationships'):
+            st.write(f"**관계:** {character_info['relationships']}")
         
-        # 대화 히스토리 표시
-        chat_container = st.container()
-        with chat_container:
-            for message in st.session_state.chat_history[selected_character]:
-                if message['role'] == 'user':
-                    st.write(f"**나:** {message['content']}")
-                else:
-                    st.write(f"**{selected_character}:** {message['content']}")
+        # 챕터 맥락 정보가 있는 경우
+        if 'current_chapter' in character_info:
+            chapter = character_info['current_chapter']
+            st.write(f"**현재 챕터:** {chapter['title']}")
+            st.write(f"**챕터 요약:** {chapter['summary']}")
+    
+    # 대화 키 생성 (전체 대화와 챕터별 대화를 구분)
+    chat_key = f"{character_name}_{context_key}"
+    
+    # 대화 히스토리 초기화
+    if chat_key not in st.session_state.chat_history:
+        st.session_state.chat_history[chat_key] = []
+    
+    # 대화 히스토리 표시
+    chat_container = st.container()
+    with chat_container:
+        for message in st.session_state.chat_history[chat_key]:
+            if message['role'] == 'user':
+                st.write(f"**나:** {message['content']}")
+            else:
+                st.write(f"**{character_name}:** {message['content']}")
+    
+    # 메시지 입력
+    user_message = st.text_input(
+        "메시지를 입력하세요:", 
+        key=f"chat_input_{chat_key}"
+    )
+    
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        send_button = st.button("전송", key=f"send_{chat_key}")
+    with col2:
+        if st.button("대화 초기화", key=f"clear_{chat_key}"):
+            st.session_state.chat_history[chat_key] = []
+            st.rerun()
+    
+    if send_button and user_message:
+        # 사용자 메시지 추가
+        st.session_state.chat_history[chat_key].append({
+            'role': 'user',
+            'content': user_message
+        })
         
-        # 메시지 입력
-        user_message = st.text_input("메시지를 입력하세요:", key=f"chat_input_{selected_character}")
-        
-        if st.button("전송") and user_message:
-            # 사용자 메시지 추가
-            st.session_state.chat_history[selected_character].append({
-                'role': 'user',
-                'content': user_message
-            })
-            
-            with st.spinner(f"{selected_character}이(가) 응답하고 있습니다..."):
-                try:
-                    response = st.session_state.chatbot.chat_with_character(
-                        character_info,
-                        user_message,
-                        st.session_state.chat_history[selected_character]
-                    )
-                    
-                    # 캐릭터 응답 추가
-                    st.session_state.chat_history[selected_character].append({
-                        'role': 'assistant',
-                        'content': response
-                    })
-                    
-                    st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"응답 생성 중 오류가 발생했습니다: {str(e)}")
+        with st.spinner(f"{character_name}이(가) 응답하고 있습니다..."):
+            try:
+                response = st.session_state.chatbot.chat_with_character(
+                    character_info,
+                    user_message,
+                    st.session_state.chat_history[chat_key]
+                )
+                
+                # 캐릭터 응답 추가
+                st.session_state.chat_history[chat_key].append({
+                    'role': 'assistant',
+                    'content': response
+                })
+                
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"응답 생성 중 오류가 발생했습니다: {str(e)}")
 
 def show_story_mode_page():
     st.header("🎮 스토리 모드")
