@@ -2,7 +2,8 @@ import streamlit as st
 import json
 import os
 from file_processor import FileProcessor
-from character_extractor import CharacterExtractor
+from enhanced_character_extractor import EnhancedCharacterExtractor
+from vector_db_manager import VectorDBManager
 from chatbot import Chatbot
 from data_manager import DataManager
 
@@ -21,7 +22,10 @@ if 'file_processor' not in st.session_state:
     st.session_state.file_processor = FileProcessor()
 
 if 'character_extractor' not in st.session_state:
-    st.session_state.character_extractor = CharacterExtractor()
+    st.session_state.character_extractor = EnhancedCharacterExtractor()
+
+if 'vector_db' not in st.session_state:
+    st.session_state.vector_db = VectorDBManager()
 
 if 'chatbot' not in st.session_state:
     st.session_state.chatbot = Chatbot()
@@ -97,20 +101,51 @@ def show_upload_page():
                         st.success("파일 텍스트 추출이 완료되었습니다!")
                         st.write(f"추출된 텍스트 길이: {len(text_content):,} 문자")
                         
-                        # 자동으로 챕터 분석 시작
-                        with st.spinner("챕터를 분석하고 있습니다..."):
+                        # RAG 시스템 기반 향상된 분석 시작
+                        progress_placeholder = st.empty()
+                        
+                        # 벡터 DB 초기화
+                        if not st.session_state.vector_db.create_novel_collections(title):
+                            st.error("벡터 데이터베이스 초기화에 실패했습니다.")
+                            return
+                        
+                        # 챕터별 상세 분석
+                        with st.spinner("챕터를 상세 분석하고 있습니다..."):
+                            def chapter_progress(current, total, message):
+                                progress_placeholder.text(f"{message} ({current}/{total})")
+                            
                             try:
-                                chapters = st.session_state.character_extractor.extract_chapters(text_content)
+                                chapters = st.session_state.character_extractor.extract_chapters_enhanced(
+                                    text_content, progress_callback=chapter_progress
+                                )
                                 novel_info['chapters'] = chapters
-                                st.success(f"{len(chapters)}개의 챕터가 분석되었습니다!")
+                                progress_placeholder.empty()
+                                st.success(f"{len(chapters)}개의 챕터가 상세 분석되었습니다!")
                                 
-                                # 자동으로 캐릭터 추출 시작
+                                # 챕터를 벡터 DB에 저장
+                                with st.spinner("챕터 정보를 벡터 데이터베이스에 저장하고 있습니다..."):
+                                    for chapter in chapters:
+                                        st.session_state.vector_db.add_chapter_to_db(chapter)
+                                
+                                # 캐릭터 추출 및 분석
                                 with st.spinner("캐릭터 정보를 추출하고 있습니다..."):
+                                    def character_progress(current, total, message):
+                                        progress_placeholder.text(f"{message} ({current}/{total})")
+                                    
                                     try:
-                                        characters = st.session_state.character_extractor.extract_characters(
-                                            text_content, chapters
+                                        characters = st.session_state.character_extractor.extract_characters_from_chapters(
+                                            chapters, progress_callback=character_progress
                                         )
                                         novel_info['characters'] = characters
+                                        progress_placeholder.empty()
+                                        
+                                        # 캐릭터를 벡터 DB에 저장
+                                        with st.spinner("캐릭터 정보를 벡터 데이터베이스에 저장하고 있습니다..."):
+                                            for character in characters:
+                                                st.session_state.vector_db.add_character_to_db(character)
+                                        
+                                        # 벡터 DB를 디스크에 저장
+                                        st.session_state.vector_db.save_to_disk(title)
                                         
                                         # 데이터 매니저에 저장
                                         st.session_state.data_manager.save_novel(novel_info)
@@ -119,31 +154,47 @@ def show_upload_page():
                                         st.success(f"분석 완료! {len(characters)}명의 캐릭터가 추출되었습니다!")
                                         
                                         # 결과 요약
-                                        st.info("✅ 파일 업로드 및 전체 분석이 완료되었습니다. 이제 '캐릭터 대화' 메뉴에서 캐릭터들과 대화할 수 있습니다.")
+                                        st.info("✅ 파일 업로드 및 RAG 기반 전체 분석이 완료되었습니다. 이제 '캐릭터 대화' 메뉴에서 캐릭터들과 대화할 수 있습니다.")
                                         
                                         # 텍스트 미리보기
                                         with st.expander("텍스트 미리보기"):
                                             st.text_area("텍스트 내용", text_content[:1000] + "...", height=200, disabled=True)
                                         
-                                        # 분석 결과 미리보기
-                                        with st.expander("분석 결과 미리보기"):
+                                        # 향상된 분석 결과 미리보기
+                                        with st.expander("상세 분석 결과"):
                                             st.write(f"**챕터 수:** {len(chapters)}")
                                             st.write(f"**캐릭터 수:** {len(characters)}")
-                                            st.write("**추출된 캐릭터들:**")
+                                            
+                                            # 챕터 요약
+                                            st.subheader("챕터 요약")
+                                            for chapter in chapters[:3]:  # 처음 3개만 표시
+                                                st.write(f"**{chapter['title']}**")
+                                                st.write(f"- 요약: {chapter['summary']}")
+                                                st.write(f"- 키워드: {', '.join(chapter.get('keywords', []))}")
+                                                st.write(f"- 등장인물: {', '.join(chapter.get('characters_mentioned', []))}")
+                                                st.write("---")
+                                            
+                                            # 캐릭터 요약
+                                            st.subheader("주요 캐릭터")
                                             for char in characters:
-                                                st.write(f"- {char['name']}: {char['role']}")
+                                                st.write(f"**{char['name']}** ({char['role']})")
+                                                st.write(f"- 성격: {char['personality'][:100]}...")
+                                                st.write(f"- 등장 챕터: {len(char.get('chapters_appeared', []))}개")
+                                                st.write("---")
                                                 
                                     except Exception as e:
                                         st.error(f"캐릭터 추출 중 오류: {str(e)}")
                                         # 챕터 분석까지는 완료된 상태로 저장
                                         st.session_state.data_manager.save_novel(novel_info)
                                         st.session_state.current_novel = novel_info
+                                        progress_placeholder.empty()
                                         
                             except Exception as e:
                                 st.error(f"챕터 분석 중 오류: {str(e)}")
                                 # 기본 정보만 저장
                                 st.session_state.data_manager.save_novel(novel_info)
                                 st.session_state.current_novel = novel_info
+                                progress_placeholder.empty()
                     else:
                         st.error("파일에서 텍스트를 추출할 수 없습니다.")
                         
@@ -231,14 +282,16 @@ def show_character_chat_page():
     # 대화 모드 선택
     chat_mode = st.radio(
         "대화 모드를 선택하세요:",
-        ["전체 캐릭터 대화", "챕터별 캐릭터 대화"],
+        ["전체 캐릭터 대화", "챕터별 캐릭터 대화", "RAG 검색 기반 대화"],
         key="chat_mode_select"
     )
     
     if chat_mode == "전체 캐릭터 대화":
         show_all_character_chat(characters)
-    else:
+    elif chat_mode == "챕터별 캐릭터 대화":
         show_chapter_character_chat(chapters, characters)
+    else:
+        show_rag_character_chat(characters)
 
 def show_all_character_chat(characters):
     """전체 캐릭터와 대화하는 기능"""
@@ -389,6 +442,51 @@ def show_character_conversation(character_name, character_info, context_key):
                 
             except Exception as e:
                 st.error(f"응답 생성 중 오류가 발생했습니다: {str(e)}")
+
+def show_rag_character_chat(characters):
+    """RAG 검색 기반 캐릭터 대화"""
+    st.subheader("🔍 RAG 검색 기반 캐릭터 대화")
+    st.info("소설 내용을 검색하여 더 정확한 대화를 할 수 있습니다.")
+    
+    # 캐릭터 선택
+    selected_character = st.selectbox(
+        "대화할 캐릭터를 선택하세요",
+        options=[char['name'] for char in characters],
+        key="rag_chat_character_select"
+    )
+    
+    if selected_character:
+        character_info = next(char for char in characters if char['name'] == selected_character)
+        
+        # 검색 기능
+        st.subheader("📚 관련 내용 검색")
+        search_query = st.text_input(
+            "관련 내용을 검색하세요 (선택사항):",
+            placeholder="예: 로맨스, 갈등, 친구 관계 등",
+            key="rag_search_input"
+        )
+        
+        search_results = []
+        if search_query:
+            with st.spinner("관련 내용을 검색하고 있습니다..."):
+                # 챕터 검색
+                chapter_results = st.session_state.vector_db.search_chapters(search_query, n_results=3)
+                if chapter_results:
+                    st.write("**관련 챕터:**")
+                    for chapter in chapter_results:
+                        st.write(f"- {chapter['title']}: {chapter['summary']}")
+                        search_results.append(f"챕터 '{chapter['title']}': {chapter['summary']}")
+        
+        # 캐릭터 정보에 검색 결과 추가
+        enhanced_character_info = character_info.copy()
+        if search_results:
+            enhanced_character_info['search_context'] = search_results
+        
+        show_character_conversation(
+            selected_character, 
+            enhanced_character_info, 
+            "rag_enhanced"
+        )
 
 def show_story_mode_page():
     st.header("🎮 스토리 모드")
