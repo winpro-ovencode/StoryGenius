@@ -1,7 +1,7 @@
 import streamlit as st
 import json
 import os
-from pdf_processor import PDFProcessor
+from file_processor import FileProcessor
 from character_extractor import CharacterExtractor
 from chatbot import Chatbot
 from data_manager import DataManager
@@ -17,8 +17,8 @@ st.set_page_config(
 if 'data_manager' not in st.session_state:
     st.session_state.data_manager = DataManager()
 
-if 'pdf_processor' not in st.session_state:
-    st.session_state.pdf_processor = PDFProcessor()
+if 'file_processor' not in st.session_state:
+    st.session_state.file_processor = FileProcessor()
 
 if 'character_extractor' not in st.session_state:
     st.session_state.character_extractor = CharacterExtractor()
@@ -64,12 +64,12 @@ def main():
         show_story_mode_page()
 
 def show_upload_page():
-    st.header("📁 소설 PDF 업로드")
+    st.header("📁 소설 파일 업로드")
     
     uploaded_file = st.file_uploader(
-        "PDF 파일을 업로드하세요",
-        type=['pdf'],
-        help="소설이 포함된 PDF 파일을 업로드하면 자동으로 분석됩니다."
+        "소설 파일을 업로드하세요",
+        type=['pdf', 'txt'],
+        help="소설이 포함된 PDF 또는 TXT 파일을 업로드하면 자동으로 분석됩니다."
     )
     
     if uploaded_file is not None:
@@ -77,22 +77,24 @@ def show_upload_page():
         st.info(f"파일명: {uploaded_file.name}")
         st.info(f"파일 크기: {uploaded_file.size:,} bytes")
         
-        if st.button("PDF 분석 시작", type="primary"):
-            with st.spinner("PDF를 분석하고 있습니다..."):
+        if st.button("파일 분석 시작", type="primary"):
+            with st.spinner("파일을 분석하고 있습니다..."):
                 try:
-                    # PDF 텍스트 추출
-                    text_content = st.session_state.pdf_processor.extract_text(uploaded_file)
+                    # 파일 텍스트 추출
+                    text_content = st.session_state.file_processor.extract_text(uploaded_file)
                     
                     if text_content:
                         # 소설 정보 생성
+                        file_name = uploaded_file.name
+                        title = file_name.replace('.pdf', '').replace('.txt', '')
                         novel_info = {
-                            'title': uploaded_file.name.replace('.pdf', ''),
+                            'title': title,
                             'content': text_content,
                             'chapters': [],
                             'characters': []
                         }
                         
-                        st.success("PDF 텍스트 추출이 완료되었습니다!")
+                        st.success("파일 텍스트 추출이 완료되었습니다!")
                         st.write(f"추출된 텍스트 길이: {len(text_content):,} 문자")
                         
                         # 자동으로 챕터 분석 시작
@@ -117,11 +119,11 @@ def show_upload_page():
                                         st.success(f"분석 완료! {len(characters)}명의 캐릭터가 추출되었습니다!")
                                         
                                         # 결과 요약
-                                        st.info("✅ PDF 업로드 및 전체 분석이 완료되었습니다. 이제 '캐릭터 대화' 메뉴에서 캐릭터들과 대화할 수 있습니다.")
+                                        st.info("✅ 파일 업로드 및 전체 분석이 완료되었습니다. 이제 '캐릭터 대화' 메뉴에서 캐릭터들과 대화할 수 있습니다.")
                                         
                                         # 텍스트 미리보기
                                         with st.expander("텍스트 미리보기"):
-                                            st.text_area("", text_content[:1000] + "...", height=200, disabled=True)
+                                            st.text_area("텍스트 내용", text_content[:1000] + "...", height=200, disabled=True)
                                         
                                         # 분석 결과 미리보기
                                         with st.expander("분석 결과 미리보기"):
@@ -143,10 +145,10 @@ def show_upload_page():
                                 st.session_state.data_manager.save_novel(novel_info)
                                 st.session_state.current_novel = novel_info
                     else:
-                        st.error("PDF에서 텍스트를 추출할 수 없습니다.")
+                        st.error("파일에서 텍스트를 추출할 수 없습니다.")
                         
                 except Exception as e:
-                    st.error(f"PDF 처리 중 오류가 발생했습니다: {str(e)}")
+                    st.error(f"파일 처리 중 오류가 발생했습니다: {str(e)}")
 
 def show_chapter_analysis_page():
     st.header("📖 챕터 분석")

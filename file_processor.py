@@ -1,15 +1,16 @@
 import pymupdf as fitz  # PyMuPDF
 import streamlit as st
+import io
 
-class PDFProcessor:
-    """PDF 파일을 처리하고 텍스트를 추출하는 클래스"""
+class FileProcessor:
+    """PDF와 TXT 파일을 처리하고 텍스트를 추출하는 클래스"""
     
     def __init__(self):
         pass
     
     def extract_text(self, uploaded_file):
         """
-        업로드된 PDF 파일에서 텍스트를 추출합니다.
+        업로드된 파일에서 텍스트를 추출합니다.
         
         Args:
             uploaded_file: Streamlit의 UploadedFile 객체
@@ -17,6 +18,17 @@ class PDFProcessor:
         Returns:
             str: 추출된 텍스트
         """
+        file_extension = uploaded_file.name.lower().split('.')[-1]
+        
+        if file_extension == 'pdf':
+            return self._extract_from_pdf(uploaded_file)
+        elif file_extension == 'txt':
+            return self._extract_from_txt(uploaded_file)
+        else:
+            raise Exception(f"지원하지 않는 파일 형식입니다: {file_extension}")
+    
+    def _extract_from_pdf(self, uploaded_file):
+        """PDF 파일에서 텍스트를 추출합니다."""
         try:
             # PDF 문서 열기
             pdf_document = fitz.open(stream=uploaded_file.read(), filetype="pdf")
@@ -50,6 +62,33 @@ class PDFProcessor:
             
         except Exception as e:
             raise Exception(f"PDF 텍스트 추출 실패: {str(e)}")
+    
+    def _extract_from_txt(self, uploaded_file):
+        """TXT 파일에서 텍스트를 추출합니다."""
+        try:
+            # 파일 내용을 문자열로 읽기
+            content = uploaded_file.read()
+            
+            # 바이트 데이터를 문자열로 디코딩
+            if isinstance(content, bytes):
+                # 여러 인코딩 시도
+                encodings = ['utf-8', 'cp949', 'euc-kr', 'latin-1']
+                for encoding in encodings:
+                    try:
+                        text_content = content.decode(encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    # 모든 인코딩이 실패한 경우 utf-8로 강제 디코딩
+                    text_content = content.decode('utf-8', errors='ignore')
+            else:
+                text_content = content
+            
+            return self._clean_text(text_content)
+            
+        except Exception as e:
+            raise Exception(f"TXT 텍스트 추출 실패: {str(e)}")
     
     def _clean_text(self, text):
         """
