@@ -96,6 +96,15 @@ class Chatbot:
 - 주요 사건: {', '.join(chapter.get('key_events', []))}
 
 이 챕터의 상황과 맥락을 고려하여 대화하세요. 해당 챕터에서 일어난 사건들과 상황에 맞는 반응을 보여주세요."""
+
+        # RAG 검색 결과가 있는 경우 추가
+        if character_info.get('search_context'):
+            prompt += f"""
+
+관련 소설 내용 (참고사항):
+{chr(10).join(character_info['search_context'])}
+
+위 내용들을 참고하여 더 정확하고 맥락에 맞는 대화를 해주세요."""
         
         prompt += """
 
