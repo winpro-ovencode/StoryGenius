@@ -9,10 +9,13 @@ class DataManager:
         self.data_dir = data_dir
         self.novels_file = os.path.join(data_dir, "novels.json")
         self.characters_file = os.path.join(data_dir, "characters.json")
+        self.projects_dir = os.path.join(data_dir, "projects")
         
         # 데이터 디렉토리 생성
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
+        if not os.path.exists(self.projects_dir):
+            os.makedirs(self.projects_dir)
         
         # 데이터 파일 초기화
         self._init_data_files()
@@ -26,6 +29,15 @@ class DataManager:
         if not os.path.exists(self.characters_file):
             with open(self.characters_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
+
+    def _safe_filename(self, name: str) -> str:
+        """파일 시스템에 안전한 파일명으로 변환합니다."""
+        import re
+        # 공백은 '_'로, 허용되지 않는 문자는 '-'로
+        s = name.strip().replace(' ', '_')
+        s = re.sub(r"[^\w\-\uAC00-\uD7A3]", "-", s)
+        # 너무 긴 파일명 방지
+        return s[:150] if len(s) > 150 else s
     
     def save_novel(self, novel_info):
         """
@@ -79,6 +91,66 @@ class DataManager:
         except Exception as e:
             print(f"소설 로드 실패: {str(e)}")
             return []
+
+    def list_project_files(self):
+        """
+        저장된 프로젝트 파일 목록을 반환합니다.
+        Returns:
+            list[dict]: [{"filename": str, "path": str, "title": str, "updated_at": str}]
+        """
+        files = []
+        try:
+            for fn in os.listdir(self.projects_dir):
+                if not fn.lower().endswith('.json'):
+                    continue
+                path = os.path.join(self.projects_dir, fn)
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    files.append({
+                        "filename": fn,
+                        "path": path,
+                        "title": data.get('title') or data.get('novel', {}).get('title') or fn,
+                        "updated_at": data.get('updated_at') or data.get('novel', {}).get('updated_at')
+                    })
+                except Exception:
+                    files.append({"filename": fn, "path": path, "title": fn, "updated_at": None})
+        except Exception as e:
+            print(f"프로젝트 목록 조회 실패: {str(e)}")
+        # 최신 순 정렬
+        files.sort(key=lambda x: (x.get('updated_at') or ''), reverse=True)
+        return files
+
+    def export_novel_to_file(self, novel_info: dict) -> str | None:
+        """
+        단일 소설을 프로젝트 파일로 저장합니다.
+        Returns:
+            str | None: 저장된 파일 경로
+        """
+        try:
+            title = novel_info.get('title', 'Untitled')
+            safe = self._safe_filename(title)
+            path = os.path.join(self.projects_dir, f"{safe}.json")
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(novel_info, f, ensure_ascii=False, indent=2)
+            return path
+        except Exception as e:
+            print(f"프로젝트 파일 저장 실패: {str(e)}")
+            return None
+
+    def load_project_file(self, filename: str) -> dict | None:
+        """프로젝트 파일에서 소설 정보를 로드합니다."""
+        try:
+            path = filename
+            if not os.path.isabs(path):
+                path = os.path.join(self.projects_dir, filename)
+            if not os.path.exists(path):
+                return None
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"프로젝트 파일 로드 실패: {str(e)}")
+            return None
     
     def get_novel_by_title(self, title):
         """

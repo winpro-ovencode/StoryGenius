@@ -1,11 +1,14 @@
 import streamlit as st
 import json
 import os
+from dotenv import load_dotenv
 from file_processor import FileProcessor
 from enhanced_character_extractor import EnhancedCharacterExtractor
 from vector_db_manager import VectorDBManager
 from chatbot import Chatbot
 from data_manager import DataManager
+
+load_dotenv()
 
 # 페이지 설정
 st.set_page_config(
@@ -45,6 +48,55 @@ def main():
     # 사이드바 메뉴
     with st.sidebar:
         st.header("메뉴")
+        # 프로젝트 관리 영역
+        with st.expander("📁 프로젝트 관리", expanded=False):
+            colp1, colp2 = st.columns(2)
+            with colp1:
+                if st.button("새 프로젝트 만들기"):
+                    st.session_state.current_novel = None
+                    st.session_state.chat_history = {}
+                    st.session_state.story_mode_history = []
+                    st.success("새 프로젝트가 초기화되었습니다.")
+                if st.button("현재 프로젝트 저장"):
+                    if st.session_state.current_novel:
+                        saved_path = st.session_state.data_manager.export_novel_to_file(st.session_state.current_novel)
+                        if saved_path:
+                            st.success(f"프로젝트 저장됨: {saved_path}")
+                            try:
+                                # 벡터 DB도 함께 저장됨(이미 save_to_disk 호출된 상태가 이상적)
+                                st.session_state.vector_db.save_to_disk(st.session_state.current_novel.get('title','Untitled'))
+                            except Exception:
+                                pass
+                        else:
+                            st.error("프로젝트 저장에 실패했습니다.")
+                    else:
+                        st.warning("저장할 현재 프로젝트가 없습니다.")
+            with colp2:
+                projects = st.session_state.data_manager.list_project_files()
+                if not projects:
+                    st.info("저장된 프로젝트가 없습니다.")
+                else:
+                    options = [p["filename"] for p in projects]
+                    labels = [f"{p['title']} ({p['filename']})" for p in projects]
+                    selected_idx = st.selectbox(
+                        "저장된 프로젝트 불러오기",
+                        options=range(len(options)),
+                        format_func=(lambda i: labels[i] if 0 <= i < len(labels) else ""),
+                        key="project_select_box"
+                    )
+                    if st.button("불러오기", key="load_project_btn"):
+                        selected_file = options[selected_idx]
+                        data = st.session_state.data_manager.load_project_file(selected_file)
+                        if data:
+                            st.session_state.current_novel = data
+                            try:
+                                st.session_state.vector_db.load_from_disk(data.get('title','Untitled'))
+                            except Exception:
+                                pass
+                            st.success(f"프로젝트 '{data.get('title','Untitled')}'를 불러왔습니다.")
+                        else:
+                            st.error("프로젝트 로드에 실패했습니다.")
+
         menu = st.selectbox(
             "기능 선택",
             ["소설 업로드", "챕터 분석", "캐릭터 관리", "캐릭터 대화", "스토리 모드"]
@@ -86,6 +138,8 @@ def show_upload_page():
                 try:
                     # 파일 텍스트 추출
                     text_content = st.session_state.file_processor.extract_text(uploaded_file)
+                    # 디버깅용: 텍스트를 10만자로 제한
+                    text_content = text_content[:100000]
                     
                     if text_content:
                         # 소설 정보 생성
@@ -111,8 +165,14 @@ def show_upload_page():
                         
                         # 챕터별 상세 분석
                         with st.spinner("챕터를 상세 분석하고 있습니다..."):
+                            # 진행 표시와 함께, 각 챕터 완료 시 제목/길이도 출력
+                            chapter_log = st.container()
                             def chapter_progress(current, total, message):
                                 progress_placeholder.text(f"{message} ({current}/{total})")
+                                # 완료 메시지 형식일 때 아래에 누적 출력
+                                if message.startswith("완료:"):
+                                    with chapter_log:
+                                        st.write(message)
                             
                             try:
                                 chapters = st.session_state.character_extractor.extract_chapters_enhanced(
@@ -150,6 +210,11 @@ def show_upload_page():
                                         # 데이터 매니저에 저장
                                         st.session_state.data_manager.save_novel(novel_info)
                                         st.session_state.current_novel = novel_info
+
+                                        # 분석 완료 즉시 프로젝트 파일로 별도 저장
+                                        saved_path = st.session_state.data_manager.export_novel_to_file(novel_info)
+                                        if saved_path:
+                                            st.caption(f"프로젝트 파일로 저장됨: {saved_path}")
                                         
                                         st.success(f"분석 완료! {len(characters)}명의 캐릭터가 추출되었습니다!")
                                         
@@ -194,6 +259,11 @@ def show_upload_page():
                                 # 기본 정보만 저장
                                 st.session_state.data_manager.save_novel(novel_info)
                                 st.session_state.current_novel = novel_info
+                                # 실패해도 현 상태를 프로젝트 파일로 백업 저장
+                                try:
+                                    st.session_state.data_manager.export_novel_to_file(novel_info)
+                                except Exception:
+                                    pass
                                 progress_placeholder.empty()
                     else:
                         st.error("파일에서 텍스트를 추출할 수 없습니다.")
@@ -265,6 +335,12 @@ def show_character_management_page():
                 st.write(f"**성격:** {character['personality']}")
                 st.write(f"**배경:** {character['background']}")
                 st.write(f"**역할:** {character['role']}")
+                if character.get('speech_style'):
+                    st.write(f"**말투 특징:** {character['speech_style']}")
+                if character.get('quotes'):
+                    st.write("**대표 어록:**")
+                    for q in character.get('quotes', [])[:5]:
+                        st.write(f"- {q}")
                 if character.get('relationships'):
                     st.write(f"**관계:** {character['relationships']}")
 
@@ -518,24 +594,30 @@ def show_story_mode_page():
             'content': user_action
         })
         
-        with st.spinner("세계가 반응하고 있습니다..."):
-            try:
-                response = st.session_state.chatbot.story_mode_response(
-                    novel,
-                    user_action,
-                    st.session_state.story_mode_history
-                )
-                
-                # 내레이션 응답 추가
-                st.session_state.story_mode_history.append({
-                    'role': 'assistant',
-                    'content': response
-                })
-                
-                st.rerun()
-                
-            except Exception as e:
-                st.error(f"스토리 진행 중 오류가 발생했습니다: {str(e)}")
+        placeholder = st.empty()
+        try:
+            # 스트리밍 출력
+            chunks = st.session_state.chatbot.story_mode_response_stream(
+                novel,
+                user_action,
+                st.session_state.story_mode_history
+            )
+            accumulated = ""
+            for piece in chunks:
+                accumulated += piece
+                # 스트리밍 중 사용자가 다른 입력을 하거나 세션이 변경되면 종료될 수 있으므로 안전 가드
+                try:
+                    placeholder.markdown(accumulated)
+                except Exception:
+                    break
+            # 스트리밍 완료 후 대화 기록에 저장
+            st.session_state.story_mode_history.append({
+                'role': 'assistant',
+                'content': accumulated
+            })
+            st.rerun()
+        except Exception as e:
+            st.error(f"스토리 진행 중 오류가 발생했습니다: {str(e)}")
     
     # 초기화 버튼
     if st.button("스토리 초기화"):

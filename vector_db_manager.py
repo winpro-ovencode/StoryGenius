@@ -3,6 +3,11 @@ import os
 import pickle
 import numpy as np
 from openai import OpenAI
+from llm_costs import (
+    estimate_tokens_from_text,
+    estimate_embedding_cost,
+    should_show_cost_info,
+)
 from typing import List, Dict, Any, Optional
 import streamlit as st
 
@@ -51,6 +56,16 @@ class VectorDBManager:
             embedding = np.array(response.data[0].embedding, dtype=np.float32)
             # 정규화 (코사인 유사도를 위해)
             embedding = embedding / np.linalg.norm(embedding)
+            if should_show_cost_info():
+                try:
+                    import streamlit as st
+                    est_tokens = estimate_tokens_from_text(text)
+                    cost = estimate_embedding_cost("text-embedding-3-small", est_tokens)
+                    st.caption(
+                        f"[임베딩] 토큰 예상 ~{est_tokens:,}, 비용 ${cost:.6f}"
+                    )
+                except Exception:
+                    pass
             return embedding
         except Exception as e:
             st.error(f"임베딩 생성 실패: {str(e)}")
@@ -95,7 +110,15 @@ class VectorDBManager:
         """캐릭터 데이터를 벡터 저장소에 추가"""
         try:
             # 캐릭터 정보로 임베딩 생성
-            character_text = f"{character_data['name']} {character_data['personality']} {character_data['background']} {character_data['role']} {' '.join(character_data.get('key_traits', []))}"
+            character_text = (
+                f"{character_data['name']} "
+                f"{character_data['personality']} "
+                f"{character_data['background']} "
+                f"{character_data['role']} "
+                f"{' '.join(character_data.get('key_traits', []))} "
+                f"{character_data.get('speech_style','')} "
+                f"{' '.join(character_data.get('quotes', []))}"
+            )
             
             embedding = self.get_embedding(character_text)
             if embedding is None:
@@ -113,6 +136,8 @@ class VectorDBManager:
                 "relationships": character_data.get("relationships", ""),
                 "description": character_data.get("description", ""),
                 "key_traits": character_data.get("key_traits", []),
+                "speech_style": character_data.get("speech_style", ""),
+                "quotes": character_data.get("quotes", []),
                 "character_arc": character_data.get("character_arc", ""),
                 "motivations": character_data.get("motivations", ""),
                 "chapters_appeared": character_data.get("chapters_appeared", [])

@@ -1,0 +1,15 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Debug Streamlit",
+        "type": "python",
+        "request": "launch",
+        "module": "streamlit.web.cli",
+        "args": ["run", "app.py", "--server.port", "8501"],
+        "console": "integratedTerminal",
+        "justMyCode": true
+      }
+    ]
+  }
+  

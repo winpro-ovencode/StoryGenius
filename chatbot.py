@@ -1,6 +1,12 @@
 import json
 import os
 from openai import OpenAI
+from llm_costs import (
+    estimate_tokens_from_messages,
+    estimate_tokens_from_text,
+    estimate_chat_cost,
+    should_show_cost_info,
+)
 
 class Chatbot:
     """캐릭터와의 대화 및 스토리 모드를 처리하는 클래스"""
@@ -9,7 +15,7 @@ class Chatbot:
         # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
         # do not change this unless explicitly requested by the user
         self.openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        self.model = "gpt-4o"
+        self.model = "gpt-5-mini"
     
     def chat_with_character(self, character_info, user_message, chat_history):
         """
@@ -46,14 +52,30 @@ class Chatbot:
                 "content": user_message
             })
             
+            # 입력 토큰 추정
+            est_prompt_tokens = estimate_tokens_from_messages(messages)
+
             response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,  # type: ignore
-                max_tokens=500,
-                temperature=0.8
             )
             
-            return response.choices[0].message.content
+            content = response.choices[0].message.content or ""
+
+            # 출력 토큰 추정
+            est_completion_tokens = estimate_tokens_from_text(content)
+
+            if should_show_cost_info():
+                try:
+                    import streamlit as st
+                    costs = estimate_chat_cost(self.model, est_prompt_tokens, est_completion_tokens)
+                    st.caption(
+                        f"토큰 예상치 — 입력: ~{est_prompt_tokens:,} / 출력: ~{est_completion_tokens:,}  |  비용: ${costs['total_cost']:.4f} (입력 ${costs['prompt_cost']:.4f} + 출력 ${costs['completion_cost']:.4f})"
+                    )
+                except Exception:
+                    pass
+
+            return content
             
         except Exception as e:
             return f"죄송합니다. 응답을 생성하는 중에 오류가 발생했습니다: {str(e)}"
@@ -85,6 +107,13 @@ class Chatbot:
         if character_info.get('description'):
             prompt += f"\n- 외모/특징: {character_info['description']}"
         
+        # 말투/어록 정보 반영
+        if character_info.get('speech_style'):
+            prompt += f"\n- 말투 특징: {character_info['speech_style']}"
+        if character_info.get('quotes'):
+            sample_quotes = character_info['quotes'][:3]
+            prompt += f"\n- 대표 어록/상투구 예시: {', '.join(sample_quotes)}"
+
         # 챕터 맥락 정보가 있는 경우 추가
         if character_info.get('current_chapter'):
             chapter = character_info['current_chapter']
@@ -158,17 +187,109 @@ class Chatbot:
                 "content": f"행동: {user_action}"
             })
             
+            est_prompt_tokens = estimate_tokens_from_messages(messages)
+
             response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,  # type: ignore
-                max_tokens=600,
-                temperature=0.9
             )
             
-            return response.choices[0].message.content
+            content = response.choices[0].message.content or ""
+
+            est_completion_tokens = estimate_tokens_from_text(content)
+            if should_show_cost_info():
+                try:
+                    import streamlit as st
+                    costs = estimate_chat_cost(self.model, est_prompt_tokens, est_completion_tokens)
+                    st.caption(
+                        f"토큰 예상치 — 입력: ~{est_prompt_tokens:,} / 출력: ~{est_completion_tokens:,}  |  비용: ${costs['total_cost']:.4f} (입력 ${costs['prompt_cost']:.4f} + 출력 ${costs['completion_cost']:.4f})"
+                    )
+                except Exception:
+                    pass
+
+            return content
             
         except Exception as e:
             return f"세계가 응답하지 않습니다... (오류: {str(e)})"
+
+    def story_mode_response_stream(self, novel_info, user_action, story_history):
+        """
+        스토리 모드에서 스트리밍 방식으로 세계관 반응을 생성합니다.
+        Yields:
+            str: 부분 응답 청크
+        """
+        try:
+            system_prompt = self._create_story_system_prompt(novel_info)
+
+            messages = [{"role": "system", "content": system_prompt}]
+            recent_history = story_history[-20:] if len(story_history) > 20 else story_history
+            for msg in recent_history[:-1]:
+                if msg['role'] == 'user':
+                    messages.append({
+                        "role": "user",
+                        "content": f"행동: {msg['content']}"
+                    })
+                elif msg['role'] == 'assistant':
+                    messages.append({
+                        "role": "assistant",
+                        "content": msg['content']
+                    })
+            messages.append({"role": "user", "content": f"행동: {user_action}"})
+
+            # 비용 계산용 입력 토큰 근사
+            from llm_costs import (
+                estimate_tokens_from_messages,
+                estimate_tokens_from_text,
+                estimate_chat_cost,
+                should_show_cost_info,
+            )
+            est_prompt_tokens = estimate_tokens_from_messages(messages)
+
+            stream = self.openai_client.chat.completions.create(
+                model=self.model,
+                messages=messages,  # type: ignore
+                stream=True,
+            )
+
+            full_content = ""
+            try:
+                for chunk in stream:
+                    try:
+                        choice = chunk.choices[0]
+                        delta = getattr(choice, 'delta', None)
+                        token_piece = ""
+                        if delta is not None:
+                            token_piece = getattr(delta, 'content', None) or ""
+                        else:
+                            # 일부 SDK에서는 'message' 경유로 제공될 수 있음
+                            msg = getattr(choice, 'message', None)
+                            token_piece = getattr(msg, 'content', None) or ""
+                        if token_piece:
+                            full_content += token_piece
+                            yield token_piece
+                    except Exception:
+                        continue
+            except GeneratorExit:
+                # 스트리밍이 중단되면 조용히 종료
+                return
+
+            # 스트림 종료 후 비용 캡션 표시
+            if should_show_cost_info():
+                try:
+                    import streamlit as st
+                    est_completion_tokens = estimate_tokens_from_text(full_content)
+                    costs = estimate_chat_cost(self.model, est_prompt_tokens, est_completion_tokens)
+                    st.caption(
+                        f"토큰 예상치 — 입력: ~{est_prompt_tokens:,} / 출력: ~{est_completion_tokens:,}  |  비용: ${costs['total_cost']:.4f} (입력 ${costs['prompt_cost']:.4f} + 출력 ${costs['completion_cost']:.4f})"
+                    )
+                except Exception:
+                    pass
+
+        except GeneratorExit:
+            # 외부에서 제너레이터 종료 요청 시 조용히 반환
+            return
+        except Exception as e:
+            yield f"세계가 응답하지 않습니다... (오류: {str(e)})"
     
     def _create_story_system_prompt(self, novel_info):
         """
@@ -230,14 +351,27 @@ class Chatbot:
                 {"role": "user", "content": "안녕하세요! 처음 뵙겠습니다. 자기소개를 해주세요."}
             ]
             
+            est_prompt_tokens = estimate_tokens_from_messages(messages)
+
             response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,  # type: ignore
                 max_tokens=300,
-                temperature=0.8
             )
             
-            return response.choices[0].message.content
+            content = response.choices[0].message.content or ""
+            est_completion_tokens = estimate_tokens_from_text(content)
+            if should_show_cost_info():
+                try:
+                    import streamlit as st
+                    costs = estimate_chat_cost(self.model, est_prompt_tokens, est_completion_tokens)
+                    st.caption(
+                        f"토큰 예상치 — 입력: ~{est_prompt_tokens:,} / 출력: ~{est_completion_tokens:,}  |  비용: ${costs['total_cost']:.4f} (입력 ${costs['prompt_cost']:.4f} + 출력 ${costs['completion_cost']:.4f})"
+                    )
+                except Exception:
+                    pass
+
+            return content
             
         except Exception as e:
             return f"안녕하세요, 저는 {character_info['name']}입니다. 만나서 반갑습니다!"
@@ -260,14 +394,27 @@ class Chatbot:
                 {"role": "user", "content": "이 세계에 처음 발을 들여놓았습니다. 주변 상황을 묘사해주세요."}
             ]
             
+            est_prompt_tokens = estimate_tokens_from_messages(messages)
+
             response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,  # type: ignore
                 max_tokens=400,
-                temperature=0.9
             )
             
-            return response.choices[0].message.content
+            content = response.choices[0].message.content or ""
+            est_completion_tokens = estimate_tokens_from_text(content)
+            if should_show_cost_info():
+                try:
+                    import streamlit as st
+                    costs = estimate_chat_cost(self.model, est_prompt_tokens, est_completion_tokens)
+                    st.caption(
+                        f"토큰 예상치 — 입력: ~{est_prompt_tokens:,} / 출력: ~{est_completion_tokens:,}  |  비용: ${costs['total_cost']:.4f} (입력 ${costs['prompt_cost']:.4f} + 출력 ${costs['completion_cost']:.4f})"
+                    )
+                except Exception:
+                    pass
+
+            return content
             
         except Exception as e:
             return f"{novel_info['title']}의 세계에 오신 것을 환영합니다. 모험이 시작됩니다..."
