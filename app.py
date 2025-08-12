@@ -7,6 +7,8 @@ from enhanced_character_extractor import EnhancedCharacterExtractor
 from vector_db_manager import VectorDBManager
 from chatbot import Chatbot
 from data_manager import DataManager
+from character_extractor import CharacterExtractor
+
 
 load_dotenv()
 
@@ -42,6 +44,10 @@ if 'chat_history' not in st.session_state:
 if 'story_mode_history' not in st.session_state:
     st.session_state.story_mode_history = []
 
+if "run_count" not in st.session_state:
+    st.session_state.run_count = 0
+st.session_state.run_count += 1
+
 def main():
     st.title("📚 소설 캐릭터 AI 챗봇 시스템")
     
@@ -60,11 +66,13 @@ def main():
                 if st.button("현재 프로젝트 저장"):
                     if st.session_state.current_novel:
                         saved_path = st.session_state.data_manager.export_novel_to_file(st.session_state.current_novel)
+                        # 현재 프로젝트 저장-> 세션에 있는 소설을 파일로 저장
                         if saved_path:
                             st.success(f"프로젝트 저장됨: {saved_path}")
                             try:
                                 # 벡터 DB도 함께 저장됨(이미 save_to_disk 호출된 상태가 이상적)
                                 st.session_state.vector_db.save_to_disk(st.session_state.current_novel.get('title','Untitled'))
+                                # 컴퓨터가 읽는 형태로 저장
                             except Exception:
                                 pass
                         else:
@@ -73,6 +81,7 @@ def main():
                         st.warning("저장할 현재 프로젝트가 없습니다.")
             with colp2:
                 projects = st.session_state.data_manager.list_project_files()
+                # brings all projects from data manager
                 if not projects:
                     st.info("저장된 프로젝트가 없습니다.")
                 else:
@@ -89,8 +98,11 @@ def main():
                         data = st.session_state.data_manager.load_project_file(selected_file)
                         if data:
                             st.session_state.current_novel = data
+                            #  불러온걸로 세션에 저장
                             try:
                                 st.session_state.vector_db.load_from_disk(data.get('title','Untitled'))
+                                # 컴퓨터 형식으로 된거 사용하게 불러오기
+
                             except Exception:
                                 pass
                             st.success(f"프로젝트 '{data.get('title','Untitled')}'를 불러왔습니다.")
@@ -107,6 +119,7 @@ def main():
             st.info(f"현재 소설: {st.session_state.current_novel['title']}")
             st.write(f"챕터 수: {len(st.session_state.current_novel.get('chapters', []))}")
             st.write(f"캐릭터 수: {len(st.session_state.current_novel.get('characters', []))}")
+
 
     if menu == "소설 업로드":
         show_upload_page()
@@ -129,7 +142,7 @@ def show_upload_page():
     )
     
     if uploaded_file is not None:
-        # 파일 정보 표시
+        # 선택 후 파일 정보 표시
         st.info(f"파일명: {uploaded_file.name}")
         st.info(f"파일 크기: {uploaded_file.size:,} bytes")
         
@@ -284,7 +297,11 @@ def show_chapter_analysis_page():
         if st.button("챕터 분석 시작", type="primary"):
             with st.spinner("챕터를 분석하고 있습니다..."):
                 try:
-                    chapters = st.session_state.character_extractor.extract_chapters(novel['content'])
+                    character_extractor = CharacterExtractor()  # make an instance
+
+                    chapters = character_extractor.extract_chapters(novel['content'])
+
+                    # chapters = st.session_state.character_extractor.extract_chapters(novel['content'])
                     novel['chapters'] = chapters
                     st.session_state.data_manager.save_novel(novel)
                     st.success(f"{len(chapters)}개의 챕터가 분석되었습니다!")

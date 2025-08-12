@@ -189,6 +189,7 @@ class CharacterExtractor:
             }
 
     def extract_characters(self, text_content, chapters):
+        print("extract_characters work")
         """
         소설에서 주요 캐릭터들을 추출합니다.
         
@@ -198,9 +199,11 @@ class CharacterExtractor:
             
         Returns:
             list: 캐릭터 정보 리스트
+
         """
         try:
             # 전체 텍스트에서 캐릭터 추출
+
             characters = self._extract_main_characters(text_content, chapters)
 
             # 각 캐릭터에 대한 상세 정보 추출
@@ -229,6 +232,7 @@ class CharacterExtractor:
         try:
             # 챕터들에서 언급된 모든 캐릭터 수집
             all_mentioned = []
+            print("THis")
             for chapter in chapters:
                 all_mentioned.extend(chapter.get('characters_mentioned', []))
 
