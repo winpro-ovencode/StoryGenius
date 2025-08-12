@@ -840,9 +840,14 @@ class EnhancedCharacterExtractor:
             # 모든 챕터에서 언급된 캐릭터 수집
             all_characters = set()
             character_appearances = {}
+            print(" this is extract characters_from chapters!!")
+
+           
             
             for chapter in chapters:
+                print(" there is a chapter")
                 mentioned = chapter.get('characters_mentioned', [])
+                # print(mentioned)
                 for char in mentioned:
                     all_characters.add(char)
                     if char not in character_appearances:
@@ -850,8 +855,13 @@ class EnhancedCharacterExtractor:
                     character_appearances[char].append(chapter['number'])
             
             # 주요 캐릭터만 필터링 (2회 이상 등장)
-            main_characters = [char for char in all_characters 
-                             if len(character_appearances.get(char, [])) >= 2]
+            print(len(chapters))
+
+            if len(chapters) == 1:
+                main_characters = [char for char in all_characters] 
+            else:
+                main_characters = [char for char in all_characters 
+                                if len(character_appearances.get(char, [])) >= 2]
             
             # 너무 많으면 상위 10명으로 제한
             if len(main_characters) > 10:
